@@ -1,0 +1,17 @@
+Advanced AI Medical Intelligence Platform
+Pneumonia Detection - EfficientNet-B0
+
+Accuracy: 86.06%
+Precision: 84.20%
+Recall: 95.64%
+F1 Score: 89.56%
+
+Classification Report:
+              precision    recall  f1-score   support
+
+      NORMAL       0.91      0.70      0.79       234
+   PNEUMONIA       0.84      0.96      0.90       390
+
+    accuracy                           0.86       624
+   macro avg       0.87      0.83      0.84       624
+weighted avg       0.87      0.86      0.86       624

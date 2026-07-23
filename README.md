@@ -255,6 +255,57 @@ NORMAL / PNEUMONIA Prediction
 ```
 
 ---
+# 📸 Application Screenshots
+
+## 🏠 Home Page
+
+The Streamlit interface provides the main dashboard for the Advanced AI Medical Intelligence Platform.
+
+![Home Page](images/home_page.png)
+
+---
+
+## 🧠 AI Model Information
+
+The platform uses an EfficientNet-B0 deep learning model trained for chest X-ray pneumonia classification.
+
+![Model Information](images/model.png)
+
+---
+
+## 🩻 X-ray Analysis
+
+Users can upload a chest X-ray image and submit it for AI-powered analysis.
+
+![X-ray Analysis](images/analysis.png)
+
+The system processes the image using the trained EfficientNet-B0 model and generates the prediction results.
+
+![Analysis Result](images/analysis1.png)
+
+---
+
+## 📋 Prediction History
+
+The application maintains prediction records using SQLite, allowing previous analyses to be displayed in the application.
+
+![Prediction History](images/prediction_history.png)
+
+---
+
+## ⚡ FastAPI Backend
+
+The backend is implemented using FastAPI and provides REST API endpoints for model inference and application services.
+
+![FastAPI Backend](images/api.png)
+
+---
+
+## ☁️ Cloud Deployment
+
+The FastAPI backend is deployed on Render and connected to the Streamlit frontend.
+
+![Deployment](images/deployment.png)
 
 ## 🛠️ Technology Stack
 

@@ -5,6 +5,8 @@ sqlalchemy
 pydantic
 pillow
 numpy
+torch
+torchvision
 opencv-python-headless
 google-genai
 python-dotenv

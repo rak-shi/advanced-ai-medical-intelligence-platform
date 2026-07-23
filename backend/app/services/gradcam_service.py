@@ -13,10 +13,13 @@ from pytorch_grad_cam.utils.image import (
 )
 
 from app.services.model_service import (
-    model_service,
-    DEVICE
+    model_service
 )
 
+
+# ============================================================
+# DIRECTORIES
+# ============================================================
 
 BASE_DIR = os.path.dirname(
     os.path.dirname(
@@ -26,11 +29,13 @@ BASE_DIR = os.path.dirname(
     )
 )
 
+
 OUTPUT_DIR = os.path.join(
     BASE_DIR,
     "outputs",
     "gradcam"
 )
+
 
 os.makedirs(
     OUTPUT_DIR,
@@ -38,31 +43,61 @@ os.makedirs(
 )
 
 
-def generate_gradcam(image_path):
+# ============================================================
+# GENERATE GRAD-CAM
+# ============================================================
 
-    # --------------------------------------------
-    # Load original image
-    # --------------------------------------------
+def generate_gradcam(
+    image_path
+):
 
-    original_image = Image.open(
+    if not os.path.exists(
         image_path
-    ).convert("RGB")
+    ):
 
-    original_image = original_image.resize(
-        (
-            model_service.image_size,
-            model_service.image_size
+        raise FileNotFoundError(
+            f"Image not found: {image_path}"
+        )
+
+
+    # ========================================================
+    # LOAD IMAGE
+    # ========================================================
+
+    with Image.open(
+        image_path
+    ) as image:
+
+        original_image = image.convert(
+            "RGB"
+        )
+
+
+    original_image = (
+        original_image.resize(
+            (
+                model_service.image_size,
+                model_service.image_size
+            )
         )
     )
 
-    rgb_image = np.array(
+
+    rgb_image = np.asarray(
         original_image
-    ).astype(np.float32) / 255.0
+    ).astype(
+        np.float32
+    )
 
 
-    # --------------------------------------------
-    # Prepare model input
-    # --------------------------------------------
+    rgb_image = (
+        rgb_image / 255.0
+    )
+
+
+    # ========================================================
+    # MODEL INPUT
+    # ========================================================
 
     input_tensor = (
         model_service.prepare_image(
@@ -71,33 +106,40 @@ def generate_gradcam(image_path):
     )
 
 
-    # --------------------------------------------
-    # Get prediction
-    # --------------------------------------------
+    # ========================================================
+    # PREDICT CLASS
+    # ========================================================
 
-    with torch.no_grad():
+    with torch.inference_mode():
 
-        output = model_service.model(
-            input_tensor
+        output = (
+            model_service.model(
+                input_tensor
+            )
         )
 
-        predicted_class = (
-            output.argmax(dim=1).item()
+
+        predicted_class_index = int(
+            output.argmax(
+                dim=1
+            ).item()
         )
 
 
-    # --------------------------------------------
-    # EfficientNet target layer
-    # --------------------------------------------
+    # ========================================================
+    # TARGET LAYER
+    # ========================================================
 
     target_layers = [
+
         model_service.model.features[-1]
+
     ]
 
 
-    # --------------------------------------------
-    # Grad-CAM
-    # --------------------------------------------
+    # ========================================================
+    # GRAD-CAM
+    # ========================================================
 
     cam = GradCAM(
         model=model_service.model,
@@ -105,53 +147,96 @@ def generate_gradcam(image_path):
     )
 
 
-    grayscale_cam = cam(
-        input_tensor=input_tensor
-    )
+    try:
 
-
-    grayscale_cam = grayscale_cam[0]
-
-
-    # --------------------------------------------
-    # Overlay heatmap
-    # --------------------------------------------
-
-    visualization = show_cam_on_image(
-        rgb_image,
-        grayscale_cam,
-        use_rgb=True
-    )
-
-
-    # --------------------------------------------
-    # Save result
-    # --------------------------------------------
-
-    filename = (
-        f"gradcam_{uuid.uuid4().hex}.jpg"
-    )
-
-    output_path = os.path.join(
-        OUTPUT_DIR,
-        filename
-    )
-
-
-    cv2.imwrite(
-        output_path,
-        cv2.cvtColor(
-            visualization,
-            cv2.COLOR_RGB2BGR
+        grayscale_cam = cam(
+            input_tensor=input_tensor
         )
-    )
 
 
-    return {
-        "gradcam_path": output_path,
+        grayscale_cam = (
+            grayscale_cam[0]
+        )
 
-        "predicted_class":
-            model_service.class_names[
-                predicted_class
-            ]
-    }
+
+        # ====================================================
+        # VISUALIZATION
+        # ====================================================
+
+        visualization = (
+            show_cam_on_image(
+                rgb_image,
+                grayscale_cam,
+                use_rgb=True
+            )
+        )
+
+
+        # ====================================================
+        # SAVE
+        # ====================================================
+
+        filename = (
+            "gradcam_"
+            f"{uuid.uuid4().hex}"
+            ".jpg"
+        )
+
+
+        output_path = os.path.join(
+            OUTPUT_DIR,
+            filename
+        )
+
+
+        saved = cv2.imwrite(
+            output_path,
+            cv2.cvtColor(
+                visualization,
+                cv2.COLOR_RGB2BGR
+            )
+        )
+
+
+        if not saved:
+
+            raise RuntimeError(
+                "OpenCV failed to save "
+                "Grad-CAM image."
+            )
+
+
+        return {
+
+            "gradcam_path":
+                output_path,
+
+            "predicted_class":
+                str(
+                    model_service.class_names[
+                        predicted_class_index
+                    ]
+                )
+        }
+
+
+    finally:
+
+        # Different pytorch-grad-cam versions
+        # handle cleanup differently.
+        if hasattr(
+            cam,
+            "__exit__"
+        ):
+
+            try:
+
+                cam.__exit__(
+                    None,
+                    None,
+                    None
+                )
+
+            except Exception:
+
+                pass

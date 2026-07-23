@@ -13,7 +13,7 @@ from PIL import Image
 
 API_BASE_URL = os.getenv(
     "API_BASE_URL",
-    "https://advanced-medical-ai-backend.onrender.com"
+    "http://127.0.0.1:8000"
 )
 
 REQUEST_TIMEOUT = 120

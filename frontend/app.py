@@ -128,6 +128,11 @@ def check_backend():
 def analyze_xray(uploaded_file):
     """
     Send chest X-ray to FastAPI prediction endpoint.
+
+    Returns (result_dict, error_message). Only one of the two
+    will be truthy. A 200 status code is NOT enough on its own —
+    Render free-tier cold starts / async races can return a 200
+    with an empty or partial body, so the body is validated too.
     """
 
     try:
@@ -150,7 +155,37 @@ def analyze_xray(uploaded_file):
         )
 
         if response.status_code == 200:
-            return response.json(), None
+
+            try:
+                data = response.json()
+            except ValueError:
+                return None, (
+                    "Backend returned a 200 response that "
+                    "was not valid JSON: "
+                    f"{response.text[:300]!r}"
+                )
+
+            # A truthy-but-incomplete body is the bug we hit:
+            # success message fires, results section stays empty.
+            if not data:
+                return None, (
+                    "Backend returned an empty response body "
+                    "(status 200). This usually means the "
+                    "Render instance was cold-starting, or the "
+                    "prediction/DB write hadn't finished before "
+                    "the response was sent."
+                )
+
+            required_keys = ("prediction", "confidence", "probabilities")
+            missing = [k for k in required_keys if k not in data]
+
+            if missing:
+                return None, (
+                    "Backend response is missing expected "
+                    f"field(s) {missing}. Raw response: {data!r}"
+                )
+
+            return data, None
 
         try:
             error_message = response.json().get(
@@ -198,7 +233,23 @@ def generate_report(prediction_id):
         )
 
         if response.status_code == 200:
-            return response.json(), None
+
+            try:
+                data = response.json()
+            except ValueError:
+                return None, (
+                    "Backend returned a 200 response that "
+                    "was not valid JSON: "
+                    f"{response.text[:300]!r}"
+                )
+
+            if not data or "medical_report" not in data:
+                return None, (
+                    "Backend response is missing the "
+                    f"'medical_report' field. Raw response: {data!r}"
+                )
+
+            return data, None
 
         try:
             error_message = response.json().get(
@@ -530,10 +581,23 @@ with analysis_tab:
                         uploaded_file
                     )
 
-
+                # NOTE: previously this only checked `error`.
+                # A 200 response with an empty/partial body made
+                # `error` falsy too, so the success toast fired
+                # while `result` was None/incomplete and the
+                # results section below silently rendered nothing.
                 if error:
 
                     st.error(error)
+
+                elif not result:
+
+                    st.error(
+                        "The backend returned no usable "
+                        "prediction data. Please try again — "
+                        "if this keeps happening, the backend "
+                        "may still be cold-starting."
+                    )
 
                 else:
 
@@ -829,10 +893,20 @@ with analysis_tab:
                         prediction_id
                     )
 
-
+                # Same class of bug as analyze_xray — check the
+                # payload, not just the error string.
                 if error:
 
                     st.error(error)
+
+                elif not report_result or not report_result.get(
+                    "medical_report"
+                ):
+
+                    st.error(
+                        "The backend returned no report text. "
+                        "Please try again."
+                    )
 
                 else:
 

@@ -510,7 +510,7 @@ with analysis_tab:
         if st.button(
             "🔬 Analyze X-ray",
             type="primary",
-            use_container_width=True
+            width="stretch"
         ):
 
             if not backend_online:
@@ -877,7 +877,7 @@ with history_tab:
 
     if st.button(
         "🔄 Refresh History",
-        use_container_width=False
+        width="content"
     ):
 
         st.rerun()

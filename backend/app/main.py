@@ -1,5 +1,9 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
 
 # ============================================================
 # DATABASE
@@ -56,6 +60,61 @@ app.add_middleware(
 
 
 # ============================================================
+# PATH CONFIGURATION
+# ============================================================
+
+# main.py is located at:
+#
+# backend/app/main.py
+#
+# Therefore dirname(dirname(__file__)) gives:
+#
+# backend/
+
+BASE_DIR = os.path.dirname(
+    os.path.dirname(
+        os.path.abspath(__file__)
+    )
+)
+
+
+# ============================================================
+# GRAD-CAM DIRECTORY
+# ============================================================
+
+GRADCAM_DIR = os.path.join(
+    BASE_DIR,
+    "outputs",
+    "gradcam"
+)
+
+# Create the directory automatically if it does not exist.
+os.makedirs(
+    GRADCAM_DIR,
+    exist_ok=True
+)
+
+
+# ============================================================
+# SERVE GRAD-CAM IMAGES
+# ============================================================
+
+# Files saved inside:
+#
+# backend/outputs/gradcam/
+#
+# will be accessible from:
+#
+# /gradcam/<filename>
+
+app.mount(
+    "/gradcam",
+    StaticFiles(directory=GRADCAM_DIR),
+    name="gradcam"
+)
+
+
+# ============================================================
 # ROUTERS
 # ============================================================
 
@@ -64,7 +123,7 @@ app.include_router(report_router)
 
 
 # ============================================================
-# ROOT
+# ROOT ENDPOINT
 # ============================================================
 
 @app.get("/")
@@ -87,6 +146,14 @@ def root():
             "SQLite Prediction History",
             "REST API"
         ],
+        "endpoints": {
+            "health": "/health",
+            "prediction": "/api/predict",
+            "history": "/api/history",
+            "report": "/api/generate-report/{prediction_id}",
+            "gradcam": "/gradcam/{filename}",
+            "documentation": "/docs"
+        },
         "disclaimer": (
             "This application is intended for educational "
             "and research purposes only. It is not a substitute "
@@ -108,5 +175,6 @@ def health():
         "model": "EfficientNet-B0",
         "database": "SQLite",
         "explainability": "Grad-CAM",
-        "llm": "Gemini"
+        "llm": "Gemini",
+        "gradcam_directory": "available"
     }

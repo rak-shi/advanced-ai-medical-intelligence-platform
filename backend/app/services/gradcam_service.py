@@ -8,15 +8,15 @@ import torch
 from PIL import Image
 
 from pytorch_grad_cam import GradCAM
-from pytorch_grad_cam.utils.image import show_cam_on_image
-from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+from pytorch_grad_cam.utils.image import (
+    show_cam_on_image
+)
+from pytorch_grad_cam.utils.model_targets import (
+    ClassifierOutputTarget
+)
 
 from app.services.model_service import model_service
 
-
-# ============================================================
-# PATHS
-# ============================================================
 
 BASE_DIR = os.path.dirname(
     os.path.dirname(
@@ -37,10 +37,6 @@ os.makedirs(
     exist_ok=True
 )
 
-
-# ============================================================
-# GENERATE GRAD-CAM
-# ============================================================
 
 def generate_gradcam(
     image_path: str,
@@ -66,7 +62,7 @@ def generate_gradcam(
         )
     )
 
-    # Image used for visualization
+    # Image for Grad-CAM visualization
     rgb_image = np.asarray(
         original_image
     ).astype(np.float32)
@@ -77,34 +73,32 @@ def generate_gradcam(
     # Prepare tensor
     # --------------------------------------------------------
 
-    input_tensor = model_service.prepare_image(
-        original_image
+    input_tensor = (
+        model_service.prepare_image(
+            original_image
+        )
     )
 
-    # Grad-CAM needs gradients.
-    # Do NOT use torch.inference_mode() here.
-    input_tensor.requires_grad_(True)
-
     # --------------------------------------------------------
-    # Model
+    # Target convolution layer
     # --------------------------------------------------------
 
-    model_service.model.eval()
-
-    # EfficientNet-B0 final feature block
     target_layers = [
         model_service.model.features[-1]
     ]
 
-    # Tell Grad-CAM which class should be explained
+    # --------------------------------------------------------
+    # Target class
+    # --------------------------------------------------------
+
     targets = [
         ClassifierOutputTarget(
-            int(predicted_class_index)
+            predicted_class_index
         )
     ]
 
     # --------------------------------------------------------
-    # Generate Grad-CAM
+    # Grad-CAM
     # --------------------------------------------------------
 
     cam = GradCAM(
@@ -119,15 +113,10 @@ def generate_gradcam(
             targets=targets
         )
 
-        if grayscale_cam is None:
-            raise RuntimeError(
-                "Grad-CAM returned no heatmap."
-            )
-
         grayscale_cam = grayscale_cam[0]
 
         # ----------------------------------------------------
-        # Overlay heatmap
+        # Create heatmap overlay
         # ----------------------------------------------------
 
         visualization = show_cam_on_image(
@@ -137,7 +126,7 @@ def generate_gradcam(
         )
 
         # ----------------------------------------------------
-        # Save image
+        # Save output
         # ----------------------------------------------------
 
         filename = (
@@ -149,14 +138,12 @@ def generate_gradcam(
             filename
         )
 
-        visualization_bgr = cv2.cvtColor(
-            visualization,
-            cv2.COLOR_RGB2BGR
-        )
-
         success = cv2.imwrite(
             output_path,
-            visualization_bgr
+            cv2.cvtColor(
+                visualization,
+                cv2.COLOR_RGB2BGR
+            )
         )
 
         if not success:
@@ -164,21 +151,19 @@ def generate_gradcam(
                 "Failed to save Grad-CAM image."
             )
 
-        if not os.path.exists(output_path):
-            raise RuntimeError(
-                "Grad-CAM output file was not created."
-            )
-
         return {
-            "gradcam_path": output_path,
-            "gradcam_filename": filename
+            "gradcam_filename": filename,
+            "gradcam_path": output_path
         }
 
     finally:
 
-        # Release hooks/resources when supported
-        if hasattr(cam, "activations_and_grads"):
+        if hasattr(cam, "__exit__"):
             try:
-                cam.activations_and_grads.release()
+                cam.__exit__(
+                    None,
+                    None,
+                    None
+                )
             except Exception:
                 pass

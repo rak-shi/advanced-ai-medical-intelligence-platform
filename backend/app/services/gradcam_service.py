@@ -1,4 +1,3 @@
-import gc
 import os
 import uuid
 
@@ -16,7 +15,7 @@ from app.services.model_service import model_service
 
 
 # ============================================================
-# DIRECTORIES
+# PATHS
 # ============================================================
 
 BASE_DIR = os.path.dirname(
@@ -45,7 +44,7 @@ os.makedirs(
 
 def generate_gradcam(
     image_path: str,
-    predicted_class_index: int | None = None
+    predicted_class_index: int
 ):
 
     if not os.path.exists(image_path):
@@ -53,115 +52,83 @@ def generate_gradcam(
             f"Image not found: {image_path}"
         )
 
-    cam = None
-    input_tensor = None
+    # --------------------------------------------------------
+    # Load image
+    # --------------------------------------------------------
+
+    with Image.open(image_path) as image:
+        original_image = image.convert("RGB")
+
+    original_image = original_image.resize(
+        (
+            model_service.image_size,
+            model_service.image_size
+        )
+    )
+
+    # Image used for visualization
+    rgb_image = np.asarray(
+        original_image
+    ).astype(np.float32)
+
+    rgb_image = rgb_image / 255.0
+
+    # --------------------------------------------------------
+    # Prepare tensor
+    # --------------------------------------------------------
+
+    input_tensor = model_service.prepare_image(
+        original_image
+    )
+
+    # Grad-CAM needs gradients.
+    # Do NOT use torch.inference_mode() here.
+    input_tensor.requires_grad_(True)
+
+    # --------------------------------------------------------
+    # Model
+    # --------------------------------------------------------
+
+    model_service.model.eval()
+
+    # EfficientNet-B0 final feature block
+    target_layers = [
+        model_service.model.features[-1]
+    ]
+
+    # Tell Grad-CAM which class should be explained
+    targets = [
+        ClassifierOutputTarget(
+            int(predicted_class_index)
+        )
+    ]
+
+    # --------------------------------------------------------
+    # Generate Grad-CAM
+    # --------------------------------------------------------
+
+    cam = GradCAM(
+        model=model_service.model,
+        target_layers=target_layers
+    )
 
     try:
-
-        # ====================================================
-        # LOAD IMAGE
-        # ====================================================
-
-        with Image.open(image_path) as image:
-
-            original_image = image.convert("RGB")
-
-            original_image = original_image.resize(
-                (
-                    model_service.image_size,
-                    model_service.image_size
-                )
-            )
-
-        # Image used for heatmap overlay
-        rgb_image = np.asarray(
-            original_image
-        ).astype(np.float32)
-
-        rgb_image /= 255.0
-
-
-        # ====================================================
-        # PREPARE MODEL INPUT
-        # ====================================================
-
-        input_tensor = model_service.prepare_image(
-            original_image
-        )
-
-        # Grad-CAM needs gradients.
-        input_tensor.requires_grad_(True)
-
-
-        # ====================================================
-        # DETERMINE TARGET CLASS
-        # ====================================================
-
-        if predicted_class_index is None:
-
-            # Only needed when caller didn't provide class.
-            with torch.no_grad():
-
-                output = model_service.model(
-                    input_tensor
-                )
-
-                predicted_class_index = int(
-                    torch.argmax(
-                        output,
-                        dim=1
-                    ).item()
-                )
-
-            del output
-
-
-        # ====================================================
-        # TARGET LAYER
-        # EfficientNet-B0 final feature block
-        # ====================================================
-
-        target_layers = [
-            model_service.model.features[-1]
-        ]
-
-
-        # ====================================================
-        # TARGET
-        # ====================================================
-
-        targets = [
-            ClassifierOutputTarget(
-                predicted_class_index
-            )
-        ]
-
-
-        # ====================================================
-        # CREATE GRAD-CAM
-        # ====================================================
-
-        cam = GradCAM(
-            model=model_service.model,
-            target_layers=target_layers
-        )
-
-
-        # ====================================================
-        # GENERATE CAM
-        # ====================================================
 
         grayscale_cam = cam(
             input_tensor=input_tensor,
             targets=targets
         )
 
+        if grayscale_cam is None:
+            raise RuntimeError(
+                "Grad-CAM returned no heatmap."
+            )
+
         grayscale_cam = grayscale_cam[0]
 
-
-        # ====================================================
-        # CREATE VISUALIZATION
-        # ====================================================
+        # ----------------------------------------------------
+        # Overlay heatmap
+        # ----------------------------------------------------
 
         visualization = show_cam_on_image(
             rgb_image,
@@ -169,10 +136,9 @@ def generate_gradcam(
             use_rgb=True
         )
 
-
-        # ====================================================
-        # SAVE OUTPUT
-        # ====================================================
+        # ----------------------------------------------------
+        # Save image
+        # ----------------------------------------------------
 
         filename = (
             f"gradcam_{uuid.uuid4().hex}.jpg"
@@ -183,60 +149,36 @@ def generate_gradcam(
             filename
         )
 
-        saved = cv2.imwrite(
-            output_path,
-            cv2.cvtColor(
-                visualization,
-                cv2.COLOR_RGB2BGR
-            )
+        visualization_bgr = cv2.cvtColor(
+            visualization,
+            cv2.COLOR_RGB2BGR
         )
 
-        if not saved:
+        success = cv2.imwrite(
+            output_path,
+            visualization_bgr
+        )
+
+        if not success:
             raise RuntimeError(
-                "OpenCV failed to save Grad-CAM image."
+                "Failed to save Grad-CAM image."
             )
 
-
-        # ====================================================
-        # RETURN
-        # ====================================================
+        if not os.path.exists(output_path):
+            raise RuntimeError(
+                "Grad-CAM output file was not created."
+            )
 
         return {
             "gradcam_path": output_path,
-            "gradcam_filename": filename,
-            "predicted_class_index":
-                predicted_class_index,
-            "predicted_class":
-                str(
-                    model_service.class_names[
-                        predicted_class_index
-                    ]
-                )
+            "gradcam_filename": filename
         }
-
 
     finally:
 
-        # ====================================================
-        # CLEANUP
-        # ====================================================
-
-        if cam is not None:
-
+        # Release hooks/resources when supported
+        if hasattr(cam, "activations_and_grads"):
             try:
-                if hasattr(cam, "__exit__"):
-                    cam.__exit__(
-                        None,
-                        None,
-                        None
-                    )
+                cam.activations_and_grads.release()
             except Exception:
                 pass
-
-        del cam
-        del input_tensor
-
-        gc.collect()
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()

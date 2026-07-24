@@ -1,5 +1,5 @@
-import os
 from datetime import datetime
+from io import BytesIO
 
 import pandas as pd
 import requests
@@ -11,12 +11,12 @@ from PIL import Image
 # CONFIGURATION
 # ============================================================
 
-API_BASE_URL = os.getenv(
-    "API_BASE_URL",
-    "https://advanced-medical-ai-backend.onrender.com"
-)
+# Deployed FastAPI backend on Render.
+# Hard-coded temporarily to eliminate environment-variable
+# mismatches while debugging the deployed application.
+API_BASE_URL = "https://advanced-medical-ai-backend.onrender.com"
 
-REQUEST_TIMEOUT = 120
+REQUEST_TIMEOUT = 180
 
 
 # ============================================================
@@ -27,7 +27,7 @@ st.set_page_config(
     page_title="Advanced AI Medical Intelligence Platform",
     page_icon="🩻",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
 
@@ -51,27 +51,12 @@ st.markdown(
         margin-bottom: 1.5rem;
     }
 
-    .prediction-card {
-        padding: 20px;
-        border-radius: 12px;
-        border: 1px solid #d1d5db;
-        margin-top: 10px;
-        margin-bottom: 15px;
-    }
-
     .disclaimer-box {
         padding: 15px;
         border-radius: 10px;
         border: 1px solid #d1d5db;
         margin-top: 15px;
         margin-bottom: 15px;
-    }
-
-    .report-box {
-        padding: 20px;
-        border-radius: 12px;
-        border: 1px solid #d1d5db;
-        margin-top: 15px;
     }
 
     div[data-testid="stMetric"] {
@@ -82,7 +67,7 @@ st.markdown(
 
     </style>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 
@@ -104,19 +89,54 @@ if "medical_report" not in st.session_state:
 
 
 # ============================================================
-# HELPER FUNCTIONS
+# UTILITY FUNCTIONS
+# ============================================================
+
+def safe_float(value):
+    """Safely convert a value to float."""
+
+    try:
+        return float(value or 0)
+
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def format_date(date_value):
+    """Format API datetime values for display."""
+
+    if not date_value:
+        return ""
+
+    try:
+
+        date_object = datetime.fromisoformat(
+            str(date_value).replace(
+                "Z",
+                "+00:00",
+            )
+        )
+
+        return date_object.strftime(
+            "%d %b %Y, %I:%M %p"
+        )
+
+    except Exception:
+        return str(date_value)
+
+
+# ============================================================
+# BACKEND HEALTH
 # ============================================================
 
 def check_backend():
-    """
-    Check whether FastAPI backend is available.
-    """
+    """Check whether the Render FastAPI backend is available."""
 
     try:
 
         response = requests.get(
             f"{API_BASE_URL}/health",
-            timeout=5
+            timeout=30,
         )
 
         return response.status_code == 200
@@ -125,10 +145,12 @@ def check_backend():
         return False
 
 
+# ============================================================
+# PREDICTION API
+# ============================================================
+
 def analyze_xray(uploaded_file):
-    """
-    Send chest X-ray to FastAPI prediction endpoint.
-    """
+    """Send an X-ray image to the FastAPI prediction endpoint."""
 
     try:
 
@@ -138,53 +160,138 @@ def analyze_xray(uploaded_file):
             "file": (
                 uploaded_file.name,
                 file_bytes,
-                uploaded_file.type
-                or "application/octet-stream"
+                uploaded_file.type or "image/jpeg",
             )
         }
 
         response = requests.post(
             f"{API_BASE_URL}/api/predict",
             files=files,
-            timeout=REQUEST_TIMEOUT
+            timeout=REQUEST_TIMEOUT,
         )
 
-        if response.status_code == 200:
-            return response.json(), None
+        # ----------------------------------------------------
+        # HTTP ERROR
+        # ----------------------------------------------------
+
+        if response.status_code != 200:
+
+            try:
+
+                error_data = response.json()
+
+                if isinstance(error_data, dict):
+
+                    error_message = error_data.get(
+                        "detail",
+                        error_data,
+                    )
+
+                else:
+                    error_message = error_data
+
+            except ValueError:
+
+                error_message = (
+                    response.text
+                    or "No error message returned."
+                )
+
+            return None, (
+                f"Backend returned HTTP "
+                f"{response.status_code}: "
+                f"{error_message}"
+            )
+
+        # ----------------------------------------------------
+        # JSON PARSING
+        # ----------------------------------------------------
 
         try:
-            error_message = response.json().get(
-                "detail",
-                "Prediction failed."
-            )
-        except Exception:
-            error_message = response.text
 
-        return None, error_message
+            data = response.json()
+
+        except ValueError:
+
+            return None, (
+                "Backend returned HTTP 200, but the "
+                "response was not valid JSON."
+            )
+
+        # ----------------------------------------------------
+        # RESPONSE VALIDATION
+        # ----------------------------------------------------
+
+        if not isinstance(data, dict):
+
+            return None, (
+                "The backend response is not a JSON object."
+            )
+
+        # Some services can return an ERROR object with HTTP 200.
+        # Never treat that as successful prediction.
+        if "ERROR" in data:
+
+            error_data = data["ERROR"]
+
+            if isinstance(error_data, dict):
+
+                error_message = error_data.get(
+                    "message",
+                    str(error_data),
+                )
+
+            else:
+                error_message = str(error_data)
+
+            return None, (
+                f"Backend prediction error: "
+                f"{error_message}"
+            )
+
+        # Successful prediction must contain prediction.
+        if "prediction" not in data:
+
+            return None, (
+                "Unexpected backend response. "
+                f"Received: {data}"
+            )
+
+        return data, None
 
     except requests.ConnectionError:
 
         return None, (
-            "Unable to connect to the FastAPI backend. "
-            "Make sure uvicorn is running on port 8000."
+            "Unable to connect to the deployed FastAPI backend."
         )
 
     except requests.Timeout:
 
         return None, (
-            "The prediction request timed out. "
-            "Please try again."
+            "Prediction request timed out. "
+            "The Render backend may be starting or the "
+            "prediction is taking too long."
         )
 
     except requests.RequestException as error:
 
-        return None, str(error)
+        return None, (
+            f"Prediction request failed: {error}"
+        )
 
+    except Exception as error:
+
+        return None, (
+            f"Unexpected prediction error: {error}"
+        )
+
+
+# ============================================================
+# GEMINI REPORT API
+# ============================================================
 
 def generate_report(prediction_id):
-    """
-    Ask backend/Gemini to generate a report.
-    """
+    """Generate the Gemini AI-assisted report."""
 
     try:
 
@@ -194,21 +301,71 @@ def generate_report(prediction_id):
                 f"/api/generate-report/"
                 f"{prediction_id}"
             ),
-            timeout=REQUEST_TIMEOUT
+            timeout=REQUEST_TIMEOUT,
         )
 
-        if response.status_code == 200:
-            return response.json(), None
+        if response.status_code != 200:
+
+            try:
+
+                data = response.json()
+
+                if isinstance(data, dict):
+
+                    error_message = data.get(
+                        "detail",
+                        data,
+                    )
+
+                else:
+                    error_message = data
+
+            except ValueError:
+
+                error_message = (
+                    response.text
+                    or "No error message returned."
+                )
+
+            return None, (
+                f"Report generation failed "
+                f"(HTTP {response.status_code}): "
+                f"{error_message}"
+            )
 
         try:
-            error_message = response.json().get(
-                "detail",
-                "Report generation failed."
-            )
-        except Exception:
-            error_message = response.text
 
-        return None, error_message
+            data = response.json()
+
+        except ValueError:
+
+            return None, (
+                "Report endpoint returned invalid JSON."
+            )
+
+        if not isinstance(data, dict):
+
+            return None, (
+                "Report endpoint returned an invalid response."
+            )
+
+        if "ERROR" in data:
+
+            error_data = data["ERROR"]
+
+            if isinstance(error_data, dict):
+
+                error_message = error_data.get(
+                    "message",
+                    str(error_data),
+                )
+
+            else:
+                error_message = str(error_data)
+
+            return None, error_message
+
+        return data, None
 
     except requests.ConnectionError:
 
@@ -227,31 +384,49 @@ def generate_report(prediction_id):
         return None, str(error)
 
 
+# ============================================================
+# HISTORY API
+# ============================================================
+
 def get_history():
-    """
-    Retrieve prediction history.
-    """
+    """Retrieve prediction history."""
 
     try:
 
         response = requests.get(
             f"{API_BASE_URL}/api/history",
-            timeout=30
+            timeout=30,
         )
 
-        if response.status_code == 200:
-            return response.json()
+        if response.status_code != 200:
+            return []
+
+        data = response.json()
+
+        if isinstance(data, list):
+            return data
+
+        if isinstance(data, dict):
+
+            if "ERROR" in data:
+                return []
+
+            return data.get(
+                "history",
+                data.get(
+                    "predictions",
+                    [],
+                ),
+            )
 
         return []
 
-    except requests.RequestException:
+    except Exception:
         return []
 
 
 def delete_history_record(prediction_id):
-    """
-    Delete a prediction from SQLite through FastAPI.
-    """
+    """Delete one prediction-history record."""
 
     try:
 
@@ -261,35 +436,13 @@ def delete_history_record(prediction_id):
                 f"/api/history/"
                 f"{prediction_id}"
             ),
-            timeout=30
+            timeout=30,
         )
 
         return response.status_code == 200
 
     except requests.RequestException:
         return False
-
-
-def format_date(date_value):
-
-    if not date_value:
-        return ""
-
-    try:
-
-        date_object = datetime.fromisoformat(
-            date_value.replace(
-                "Z",
-                "+00:00"
-            )
-        )
-
-        return date_object.strftime(
-            "%d %b %Y, %I:%M %p"
-        )
-
-    except Exception:
-        return date_value
 
 
 # ============================================================
@@ -311,11 +464,26 @@ with st.sidebar:
     backend_online = check_backend()
 
     if backend_online:
-        st.success("Backend Online")
-    else:
-        st.error("Backend Offline")
 
-    st.write("**Model:** EfficientNet-B0")
+        st.success(
+            "Backend Online"
+        )
+
+    else:
+
+        st.error(
+            "Backend Offline"
+        )
+
+    # Temporary deployment diagnostic.
+    # Keep this until the deployed application is stable.
+    st.caption(
+        f"API: {API_BASE_URL}"
+    )
+
+    st.write(
+        "**Model:** EfficientNet-B0"
+    )
 
     st.write(
         "**Task:** Pneumonia Detection"
@@ -339,21 +507,23 @@ with st.sidebar:
 
     st.divider()
 
-    st.subheader("Model Performance")
+    st.subheader(
+        "Model Performance"
+    )
 
     st.metric(
         "Test Accuracy",
-        "86.06%"
+        "86.06%",
     )
 
     st.metric(
         "Pneumonia Recall",
-        "95.64%"
+        "95.64%",
     )
 
     st.metric(
         "Pneumonia F1",
-        "89.56%"
+        "89.56%",
     )
 
     st.divider()
@@ -369,33 +539,36 @@ with st.sidebar:
 # ============================================================
 
 st.markdown(
-    '<div class="main-title">'
-    'Advanced AI Medical Intelligence Platform'
-    '</div>',
-    unsafe_allow_html=True
+    """
+    <div class="main-title">
+        Advanced AI Medical Intelligence Platform
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 st.markdown(
-    '<div class="subtitle">'
-    'Deep Learning • Medical Image Analysis • '
-    'Grad-CAM Explainability • Gemini LLM • FastAPI'
-    '</div>',
-    unsafe_allow_html=True
+    """
+    <div class="subtitle">
+        Deep Learning • Medical Image Analysis •
+        Grad-CAM Explainability • Gemini LLM • FastAPI
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
-
 
 st.markdown(
     """
     <div class="disclaimer-box">
-    <strong>Important:</strong>
-    This application is an educational and research
-    prototype. Predictions and AI-generated reports must
-    not be interpreted as medical diagnoses or used as a
-    substitute for evaluation by qualified healthcare
-    professionals.
+        <strong>Important:</strong>
+        This application is an educational and research
+        prototype. Predictions and AI-generated reports must
+        not be interpreted as medical diagnoses or used as a
+        substitute for evaluation by qualified healthcare
+        professionals.
     </div>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 
@@ -407,13 +580,13 @@ analysis_tab, history_tab, about_tab = st.tabs(
     [
         "🩻 X-ray Analysis",
         "📋 Prediction History",
-        "ℹ️ About"
+        "ℹ️ About",
     ]
 )
 
 
 # ============================================================
-# ANALYSIS TAB
+# X-RAY ANALYSIS TAB
 # ============================================================
 
 with analysis_tab:
@@ -427,18 +600,16 @@ with analysis_tab:
         "the EfficientNet-B0 pneumonia classifier."
     )
 
-
     uploaded_file = st.file_uploader(
         "Upload Chest X-ray",
         type=[
             "jpg",
             "jpeg",
-            "png"
+            "png",
         ],
         help=(
-            "Supported formats: "
-            "JPG, JPEG and PNG"
-        )
+            "Supported formats: JPG, JPEG and PNG"
+        ),
     )
 
 
@@ -450,8 +621,10 @@ with analysis_tab:
 
         try:
 
+            image_bytes = uploaded_file.getvalue()
+
             uploaded_image = Image.open(
-                uploaded_file
+                BytesIO(image_bytes)
             )
 
             st.subheader(
@@ -467,39 +640,38 @@ with analysis_tab:
                 st.image(
                     uploaded_image,
                     caption=uploaded_file.name,
-                    use_container_width=True
+                    use_container_width=True,
                 )
 
             with info_column:
 
                 st.write(
                     "**Filename:**",
-                    uploaded_file.name
+                    uploaded_file.name,
                 )
 
                 st.write(
                     "**Format:**",
-                    uploaded_image.format
+                    uploaded_image.format,
                 )
 
                 st.write(
                     "**Image size:**",
                     (
-                        f"{uploaded_image.width}"
-                        f" × "
+                        f"{uploaded_image.width} × "
                         f"{uploaded_image.height}"
-                    )
+                    ),
                 )
 
                 st.write(
                     "**Mode:**",
-                    uploaded_image.mode
+                    uploaded_image.mode,
                 )
 
-        except Exception:
+        except Exception as error:
 
             st.error(
-                "Unable to read this image."
+                f"Unable to read this image: {error}"
             )
 
 
@@ -510,14 +682,17 @@ with analysis_tab:
         if st.button(
             "🔬 Analyze X-ray",
             type="primary",
-            use_container_width=True
+            use_container_width=True,
         ):
+
+            # Remove old prediction before a new request.
+            st.session_state.prediction_result = None
+            st.session_state.medical_report = None
 
             if not backend_online:
 
                 st.error(
-                    "FastAPI backend is offline. "
-                    "Start the backend before analyzing."
+                    "FastAPI backend is offline."
                 )
 
             else:
@@ -530,10 +705,11 @@ with analysis_tab:
                         uploaded_file
                     )
 
-
                 if error:
 
-                    st.error(error)
+                    st.error(
+                        error
+                    )
 
                 else:
 
@@ -557,13 +733,12 @@ with analysis_tab:
 
 
     # ========================================================
-    # PREDICTION RESULT
+    # PREDICTION RESULTS
     # ========================================================
 
     result = st.session_state.prediction_result
 
-
-    if result:
+    if result is not None:
 
         st.divider()
 
@@ -571,293 +746,422 @@ with analysis_tab:
             "AI Prediction"
         )
 
+        if not isinstance(result, dict):
 
-        prediction = result.get(
-            "prediction",
-            "Unknown"
-        )
-
-        confidence = float(
-            result.get(
-                "confidence",
-                0
-            )
-        )
-
-        probabilities = result.get(
-            "probabilities",
-            {}
-        )
-
-        normal_probability = float(
-            probabilities.get(
-                "NORMAL",
-                0
-            )
-        )
-
-        pneumonia_probability = float(
-            probabilities.get(
-                "PNEUMONIA",
-                0
-            )
-        )
-
-
-        # ====================================================
-        # METRICS
-        # ====================================================
-
-        metric1, metric2, metric3 = st.columns(
-            3
-        )
-
-
-        with metric1:
-
-            st.metric(
-                "Prediction",
-                prediction
+            st.error(
+                "The prediction response is invalid."
             )
 
+        elif "prediction" not in result:
 
-        with metric2:
-
-            st.metric(
-                "Confidence",
-                f"{confidence:.2f}%"
+            st.error(
+                "Prediction field is missing from "
+                "the backend response."
             )
 
+        else:
 
-        with metric3:
+            prediction = result.get(
+                "prediction",
+                "Unknown",
+            )
 
-            st.metric(
-                "Prediction ID",
+            confidence = safe_float(
                 result.get(
-                    "id",
-                    "-"
+                    "confidence",
+                    0,
                 )
             )
 
-
-        st.subheader(
-            "Class Probabilities"
-        )
-
-
-        probability1, probability2 = st.columns(
-            2
-        )
-
-
-        with probability1:
-
-            st.metric(
-                "NORMAL",
-                f"{normal_probability:.2f}%"
+            probabilities = result.get(
+                "probabilities",
+                {},
             )
 
-            st.progress(
-                min(
-                    max(
-                        normal_probability / 100,
-                        0.0
-                    ),
-                    1.0
-                )
-            )
-
-
-        with probability2:
-
-            st.metric(
-                "PNEUMONIA",
-                f"{pneumonia_probability:.2f}%"
-            )
-
-            st.progress(
-                min(
-                    max(
-                        pneumonia_probability / 100,
-                        0.0
-                    ),
-                    1.0
-                )
-            )
-
-
-        # ====================================================
-        # X-RAY + GRAD-CAM
-        # ====================================================
-
-        st.divider()
-
-        st.header(
-            "Explainable AI — Grad-CAM"
-        )
-
-        st.write(
-            "Grad-CAM highlights image regions that "
-            "contributed to the neural network's "
-            "prediction. Highlighted regions are not "
-            "proof of pathology."
-        )
-
-
-        original_column, gradcam_column = st.columns(
-            2
-        )
-
-
-        with original_column:
-
-            st.subheader(
-                "Original X-ray"
-            )
-
-            if (
-                st.session_state.uploaded_image_bytes
-                is not None
+            if not isinstance(
+                probabilities,
+                dict,
             ):
+                probabilities = {}
 
-                st.image(
-                    st.session_state.uploaded_image_bytes,
-                    caption=(
-                        st.session_state.uploaded_filename
+            normal_probability = safe_float(
+                probabilities.get(
+                    "NORMAL",
+                    probabilities.get(
+                        "normal",
+                        result.get(
+                            "normal_probability",
+                            0,
+                        ),
                     ),
-                    use_container_width=True
+                )
+            )
+
+            pneumonia_probability = safe_float(
+                probabilities.get(
+                    "PNEUMONIA",
+                    probabilities.get(
+                        "pneumonia",
+                        result.get(
+                            "pneumonia_probability",
+                            0,
+                        ),
+                    ),
+                )
+            )
+
+            prediction_id = result.get(
+                "id",
+                result.get(
+                    "prediction_id"
+                ),
+            )
+
+
+            # =================================================
+            # PREDICTION METRICS
+            # =================================================
+
+            metric1, metric2, metric3 = st.columns(
+                3
+            )
+
+            with metric1:
+
+                st.metric(
+                    "Prediction",
+                    str(prediction),
+                )
+
+            with metric2:
+
+                st.metric(
+                    "Confidence",
+                    f"{confidence:.2f}%",
+                )
+
+            with metric3:
+
+                st.metric(
+                    "Prediction ID",
+                    (
+                        prediction_id
+                        if prediction_id is not None
+                        else "-"
+                    ),
                 )
 
 
-        with gradcam_column:
+            # =================================================
+            # CLASS PROBABILITIES
+            # =================================================
 
             st.subheader(
-                "Grad-CAM Explanation"
+                "Class Probabilities"
             )
 
-            gradcam_url = result.get(
-                "gradcam_url"
+            probability1, probability2 = st.columns(
+                2
             )
 
-            if gradcam_url:
+            with probability1:
 
-                full_gradcam_url = (
-                    f"{API_BASE_URL}"
-                    f"{gradcam_url}"
+                st.metric(
+                    "NORMAL",
+                    f"{normal_probability:.2f}%",
                 )
 
-                try:
-
-                    gradcam_response = requests.get(
-                        full_gradcam_url,
-                        timeout=30
+                st.progress(
+                    min(
+                        max(
+                            normal_probability / 100,
+                            0.0,
+                        ),
+                        1.0,
                     )
+                )
 
-                    if (
-                        gradcam_response.status_code
-                        == 200
-                    ):
+            with probability2:
+
+                st.metric(
+                    "PNEUMONIA",
+                    f"{pneumonia_probability:.2f}%",
+                )
+
+                st.progress(
+                    min(
+                        max(
+                            pneumonia_probability / 100,
+                            0.0,
+                        ),
+                        1.0,
+                    )
+                )
+
+
+            # =================================================
+            # GRAD-CAM
+            # =================================================
+
+            st.divider()
+
+            st.header(
+                "Explainable AI — Grad-CAM"
+            )
+
+            st.write(
+                "Grad-CAM highlights image regions that "
+                "contributed to the neural network's "
+                "prediction. Highlighted regions are not "
+                "proof of pathology."
+            )
+
+            original_column, gradcam_column = st.columns(
+                2
+            )
+
+            # -------------------------------------------------
+            # ORIGINAL IMAGE
+            # -------------------------------------------------
+
+            with original_column:
+
+                st.subheader(
+                    "Original X-ray"
+                )
+
+                if (
+                    st.session_state.uploaded_image_bytes
+                    is not None
+                ):
+
+                    try:
+
+                        original_image = Image.open(
+                            BytesIO(
+                                st.session_state
+                                .uploaded_image_bytes
+                            )
+                        )
 
                         st.image(
-                            gradcam_response.content,
+                            original_image,
                             caption=(
-                                "Grad-CAM visualization"
+                                st.session_state
+                                .uploaded_filename
                             ),
-                            use_container_width=True
+                            use_container_width=True,
+                        )
+
+                    except Exception as error:
+
+                        st.warning(
+                            "Unable to display original "
+                            f"X-ray: {error}"
+                        )
+
+
+            # -------------------------------------------------
+            # GRAD-CAM IMAGE
+            # -------------------------------------------------
+
+            with gradcam_column:
+
+                st.subheader(
+                    "Grad-CAM Explanation"
+                )
+
+                gradcam_url = result.get(
+                    "gradcam_url",
+                    result.get(
+                        "gradcam"
+                    ),
+                )
+
+                if gradcam_url:
+
+                    gradcam_url = str(
+                        gradcam_url
+                    ).strip()
+
+                    if gradcam_url.startswith(
+                        (
+                            "http://",
+                            "https://",
+                        )
+                    ):
+
+                        full_gradcam_url = (
+                            gradcam_url
                         )
 
                     else:
 
-                        st.warning(
-                            "Unable to load Grad-CAM image."
+                        if not gradcam_url.startswith(
+                            "/"
+                        ):
+                            gradcam_url = (
+                                "/" + gradcam_url
+                            )
+
+                        full_gradcam_url = (
+                            f"{API_BASE_URL}"
+                            f"{gradcam_url}"
                         )
 
-                except requests.RequestException:
+                    try:
 
-                    st.warning(
-                        "Unable to connect to Grad-CAM endpoint."
-                    )
+                        gradcam_response = requests.get(
+                            full_gradcam_url,
+                            timeout=60,
+                        )
 
-            else:
+                        if (
+                            gradcam_response.status_code
+                            == 200
+                        ):
 
-                st.warning(
-                    "No Grad-CAM visualization available."
-                )
+                            try:
 
+                                gradcam_image = Image.open(
+                                    BytesIO(
+                                        gradcam_response.content
+                                    )
+                                )
 
-        # ====================================================
-        # AI MEDICAL REPORT
-        # ====================================================
+                                st.image(
+                                    gradcam_image,
+                                    caption=(
+                                        "Grad-CAM visualization"
+                                    ),
+                                    use_container_width=True,
+                                )
 
-        st.divider()
+                            except Exception as error:
 
-        st.header(
-            "AI-Assisted Medical Report"
-        )
+                                st.warning(
+                                    "Grad-CAM file was returned "
+                                    "but could not be decoded "
+                                    f"as an image: {error}"
+                                )
 
-        st.write(
-            "Generate a structured explanatory report "
-            "using Gemini based on the model output."
-        )
+                        else:
 
+                            st.warning(
+                                "Unable to load Grad-CAM "
+                                "visualization. HTTP "
+                                f"{gradcam_response.status_code}"
+                            )
 
-        prediction_id = result.get(
-            "id"
-        )
+                    except requests.RequestException as error:
 
-
-        if st.button(
-            "✨ Generate AI Report",
-            type="primary",
-            use_container_width=True,
-            key="generate_report"
-        ):
-
-            if not prediction_id:
-
-                st.error(
-                    "Prediction ID is unavailable."
-                )
-
-            else:
-
-                with st.spinner(
-                    "Gemini is generating the report..."
-                ):
-
-                    report_result, error = generate_report(
-                        prediction_id
-                    )
-
-
-                if error:
-
-                    st.error(error)
+                        st.warning(
+                            "Unable to retrieve Grad-CAM "
+                            f"visualization: {error}"
+                        )
 
                 else:
 
-                    st.session_state.medical_report = (
-                        report_result.get(
-                            "medical_report"
+                    st.warning(
+                        "No Grad-CAM visualization "
+                        "was returned by the backend."
+                    )
+
+
+            # =================================================
+            # GEMINI AI REPORT
+            # =================================================
+
+            st.divider()
+
+            st.header(
+                "AI-Assisted Medical Report"
+            )
+
+            st.write(
+                "Generate a structured explanatory report "
+                "using Gemini based on the model output."
+            )
+
+            if st.button(
+                "✨ Generate AI Report",
+                type="primary",
+                use_container_width=True,
+                key="generate_report",
+            ):
+
+                if prediction_id is None:
+
+                    st.error(
+                        "Prediction ID is unavailable."
+                    )
+
+                else:
+
+                    with st.spinner(
+                        "Gemini is generating the report..."
+                    ):
+
+                        (
+                            report_result,
+                            report_error,
+                        ) = generate_report(
+                            prediction_id
                         )
-                    )
 
-                    st.success(
-                        "AI-assisted report generated."
-                    )
+                    if report_error:
 
+                        st.error(
+                            report_error
+                        )
 
-        if st.session_state.medical_report:
+                    else:
 
-            st.markdown(
-                st.session_state.medical_report
-            )
+                        medical_report = None
 
-            st.warning(
-                "This AI-assisted report is for "
-                "educational and research purposes only "
-                "and does not constitute a medical diagnosis."
-            )
+                        if isinstance(
+                            report_result,
+                            dict,
+                        ):
+
+                            medical_report = (
+                                report_result.get(
+                                    "medical_report",
+                                    report_result.get(
+                                        "report"
+                                    ),
+                                )
+                            )
+
+                        if medical_report:
+
+                            st.session_state.medical_report = (
+                                medical_report
+                            )
+
+                            st.success(
+                                "AI-assisted report generated."
+                            )
+
+                        else:
+
+                            st.error(
+                                "The backend did not return "
+                                "a medical report."
+                            )
+
+            if st.session_state.medical_report:
+
+                st.markdown(
+                    st.session_state.medical_report
+                )
+
+                st.warning(
+                    "This AI-assisted report is for "
+                    "educational and research purposes only "
+                    "and does not constitute a medical "
+                    "diagnosis."
+                )
 
 
 # ============================================================
@@ -874,17 +1178,13 @@ with history_tab:
         "Predictions stored in the SQLite database."
     )
 
-
     if st.button(
         "🔄 Refresh History",
-        use_container_width=False
     ):
 
         st.rerun()
 
-
     history = get_history()
-
 
     if not history:
 
@@ -896,43 +1196,64 @@ with history_tab:
 
         history_rows = []
 
-
         for record in history:
 
-            history_rows.append({
+            if not isinstance(
+                record,
+                dict,
+            ):
+                continue
 
-                "ID":
-                    record.get("id"),
+            history_confidence = safe_float(
+                record.get(
+                    "confidence",
+                    0,
+                )
+            )
 
-                "Filename":
-                    record.get(
+            history_normal = safe_float(
+                record.get(
+                    "normal_probability",
+                    0,
+                )
+            )
+
+            history_pneumonia = safe_float(
+                record.get(
+                    "pneumonia_probability",
+                    0,
+                )
+            )
+
+            history_rows.append(
+                {
+                    "ID": record.get(
+                        "id"
+                    ),
+
+                    "Filename": record.get(
                         "filename",
-                        ""
+                        "",
                     ),
 
-                "Prediction":
-                    record.get(
+                    "Prediction": record.get(
                         "prediction",
-                        ""
+                        "",
                     ),
 
-                "Confidence":
-                    (
-                        f"{record.get('confidence', 0):.2f}%"
+                    "Confidence": (
+                        f"{history_confidence:.2f}%"
                     ),
 
-                "Normal":
-                    (
-                        f"{record.get('normal_probability', 0):.2f}%"
+                    "Normal": (
+                        f"{history_normal:.2f}%"
                     ),
 
-                "Pneumonia":
-                    (
-                        f"{record.get('pneumonia_probability', 0):.2f}%"
+                    "Pneumonia": (
+                        f"{history_pneumonia:.2f}%"
                     ),
 
-                "Report":
-                    (
+                    "Report": (
                         "Generated"
                         if record.get(
                             "medical_report"
@@ -940,170 +1261,180 @@ with history_tab:
                         else "Not Generated"
                     ),
 
-                "Date":
-                    format_date(
+                    "Date": format_date(
                         record.get(
                             "created_at"
                         )
-                    )
-            })
-
-
-        history_dataframe = pd.DataFrame(
-            history_rows
-        )
-
-
-        st.dataframe(
-            history_dataframe,
-            use_container_width=True,
-            hide_index=True
-        )
-
-
-        st.divider()
-
-        st.subheader(
-            "View Prediction Details"
-        )
-
-
-        available_ids = [
-            record.get("id")
-            for record in history
-            if record.get("id") is not None
-        ]
-
-
-        selected_id = st.selectbox(
-            "Select Prediction ID",
-            available_ids
-        )
-
-
-        selected_record = next(
-            (
-                record
-                for record in history
-                if record.get("id")
-                == selected_id
-            ),
-            None
-        )
-
-
-        if selected_record:
-
-            detail1, detail2, detail3 = st.columns(
-                3
+                    ),
+                }
             )
 
+        if history_rows:
 
-            with detail1:
-
-                st.metric(
-                    "Prediction",
-                    selected_record.get(
-                        "prediction",
-                        "-"
-                    )
-                )
-
-
-            with detail2:
-
-                st.metric(
-                    "Confidence",
-                    (
-                        f"{selected_record.get('confidence', 0):.2f}%"
-                    )
-                )
-
-
-            with detail3:
-
-                st.metric(
-                    "Prediction ID",
-                    selected_record.get(
-                        "id",
-                        "-"
-                    )
-                )
-
-
-            st.write(
-                "**Filename:**",
-                selected_record.get(
-                    "filename",
-                    ""
-                )
+            history_dataframe = pd.DataFrame(
+                history_rows
             )
 
-
-            st.write(
-                "**Created:**",
-                format_date(
-                    selected_record.get(
-                        "created_at"
-                    )
-                )
+            st.dataframe(
+                history_dataframe,
+                use_container_width=True,
+                hide_index=True,
             )
-
-
-            if selected_record.get(
-                "medical_report"
-            ):
-
-                with st.expander(
-                    "View AI-Assisted Report",
-                    expanded=False
-                ):
-
-                    st.markdown(
-                        selected_record[
-                            "medical_report"
-                        ]
-                    )
-
 
             st.divider()
 
             st.subheader(
-                "Delete Record"
+                "View Prediction Details"
             )
 
-            st.warning(
-                "Deleting a record removes it "
-                "from the prediction-history database."
-            )
-
-
-            if st.button(
-                "🗑️ Delete Selected Prediction",
-                key=(
-                    f"delete_"
-                    f"{selected_id}"
+            available_ids = [
+                record.get("id")
+                for record in history
+                if isinstance(
+                    record,
+                    dict,
                 )
-            ):
+                and record.get(
+                    "id"
+                ) is not None
+            ]
 
-                deleted = delete_history_record(
-                    selected_id
+            if available_ids:
+
+                selected_id = st.selectbox(
+                    "Select Prediction ID",
+                    available_ids,
                 )
 
+                selected_record = next(
+                    (
+                        record
+                        for record in history
+                        if isinstance(
+                            record,
+                            dict,
+                        )
+                        and record.get(
+                            "id"
+                        ) == selected_id
+                    ),
+                    None,
+                )
 
-                if deleted:
+                if selected_record:
 
-                    st.success(
-                        "Prediction deleted successfully."
+                    (
+                        detail1,
+                        detail2,
+                        detail3,
+                    ) = st.columns(3)
+
+                    with detail1:
+
+                        st.metric(
+                            "Prediction",
+                            selected_record.get(
+                                "prediction",
+                                "-",
+                            ),
+                        )
+
+                    with detail2:
+
+                        selected_confidence = safe_float(
+                            selected_record.get(
+                                "confidence",
+                                0,
+                            )
+                        )
+
+                        st.metric(
+                            "Confidence",
+                            (
+                                f"{selected_confidence:.2f}%"
+                            ),
+                        )
+
+                    with detail3:
+
+                        st.metric(
+                            "Prediction ID",
+                            selected_record.get(
+                                "id",
+                                "-",
+                            ),
+                        )
+
+                    st.write(
+                        "**Filename:**",
+                        selected_record.get(
+                            "filename",
+                            "",
+                        ),
                     )
 
-                    st.rerun()
-
-                else:
-
-                    st.error(
-                        "Unable to delete prediction."
+                    st.write(
+                        "**Created:**",
+                        format_date(
+                            selected_record.get(
+                                "created_at"
+                            )
+                        ),
                     )
+
+                    if selected_record.get(
+                        "medical_report"
+                    ):
+
+                        with st.expander(
+                            "View AI-Assisted Report"
+                        ):
+
+                            st.markdown(
+                                selected_record[
+                                    "medical_report"
+                                ]
+                            )
+
+                    st.divider()
+
+                    st.subheader(
+                        "Delete Record"
+                    )
+
+                    st.warning(
+                        "Deleting a record removes it "
+                        "from prediction history."
+                    )
+
+                    if st.button(
+                        "🗑️ Delete Selected Prediction",
+                        key=(
+                            f"delete_"
+                            f"{selected_id}"
+                        ),
+                    ):
+
+                        deleted = (
+                            delete_history_record(
+                                selected_id
+                            )
+                        )
+
+                        if deleted:
+
+                            st.success(
+                                "Prediction deleted "
+                                "successfully."
+                            )
+
+                            st.rerun()
+
+                        else:
+
+                            st.error(
+                                "Unable to delete prediction."
+                            )
 
 
 # ============================================================
@@ -1116,30 +1447,24 @@ with about_tab:
         "About the Platform"
     )
 
-
     st.markdown(
         """
 ### Project Overview
 
-The **Advanced AI Medical Intelligence Platform**
-is an end-to-end AI application demonstrating the
-integration of deep learning, medical image analysis,
-explainable AI, large language models, REST APIs,
-database management and a web interface.
+The **Advanced AI Medical Intelligence Platform** is an
+end-to-end AI application demonstrating deep learning,
+medical image analysis, explainable AI, large language
+models, REST APIs, database management and a web interface.
 
 ### Deep Learning Model
 
 The chest X-ray classifier uses **EfficientNet-B0**
 with transfer learning.
 
-The model was trained to distinguish between:
+The model classifies:
 
 - **NORMAL**
 - **PNEUMONIA**
-
-The supplied training data was split using a stratified
-80/20 training-validation strategy, while the original
-test set was kept separate for final evaluation.
 
 ### Model Performance
 
@@ -1153,38 +1478,34 @@ test set was kept separate for final evaluation.
 
 ### Explainable AI
 
-**Grad-CAM** is used to visualize regions that influenced
-the EfficientNet prediction.
+**Grad-CAM** visualizes regions that influenced the
+EfficientNet prediction.
 
-Grad-CAM should be interpreted only as an explanatory
-visualization of model attention. It does not establish
-pathology or anatomical causation.
+Grad-CAM is an explanatory visualization and does not
+establish pathology or anatomical causation.
 
 ### Large Language Model
 
 **Gemini** generates a structured AI-assisted report using
-the classifier's prediction and confidence scores.
-
-The LLM does not independently establish a medical
-diagnosis.
+the classifier prediction and confidence scores.
 
 ### Backend
 
 The REST API is implemented using **FastAPI**.
 
-Available functionality includes:
+Functionality includes:
 
 - X-ray prediction
 - Grad-CAM generation
-- AI-assisted report generation
-- Prediction-history retrieval
+- Gemini report generation
+- Prediction history
 - Prediction deletion
 - Health monitoring
 
 ### Database
 
-**SQLite + SQLAlchemy** stores prediction history,
-probabilities, Grad-CAM paths and generated reports.
+**SQLite + SQLAlchemy** stores prediction history and
+generated reports.
 
 ### Technology Stack
 
@@ -1202,11 +1523,9 @@ probabilities, Grad-CAM paths and generated reports.
 
 ### Important Limitation
 
-This project is an educational and technical demonstration.
-It has not undergone the clinical validation, regulatory
-review, prospective evaluation, calibration analysis, or
-external validation required for deployment as a medical
-diagnostic system.
+This application is an educational and research prototype.
+It has not undergone the clinical validation or regulatory
+review required for use as a medical diagnostic system.
         """
     )
 

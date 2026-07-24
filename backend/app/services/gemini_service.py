@@ -1,13 +1,9 @@
 import os
-
+ 
 from dotenv import load_dotenv
 from google import genai
-
-
-# ============================================================
-# ENVIRONMENT
-# ============================================================
-
+ 
+ 
 BASE_DIR = os.path.dirname(
     os.path.dirname(
         os.path.dirname(
@@ -15,80 +11,64 @@ BASE_DIR = os.path.dirname(
         )
     )
 )
-
+ 
 ENV_PATH = os.path.join(
     BASE_DIR,
     ".env"
 )
-
-load_dotenv(
-    ENV_PATH
-)
-
-
+ 
+load_dotenv(ENV_PATH)
+ 
+ 
 API_KEY = os.getenv(
     "GEMINI_API_KEY"
 )
-
-GEMINI_MODEL = os.getenv(
-    "GEMINI_MODEL",
-    "gemini-3.6-flash"
-)
-
-
-# ============================================================
-# CLIENT
-# ============================================================
-
+ 
+ 
 def get_client():
-
+ 
     if not API_KEY:
-
         raise RuntimeError(
             "GEMINI_API_KEY is not configured."
         )
-
+ 
     return genai.Client(
         api_key=API_KEY
     )
-
-
-# ============================================================
-# GENERATE REPORT
-# ============================================================
-
+ 
+ 
 def generate_medical_report(
     prediction: str,
     confidence: float,
     normal_probability: float,
     pneumonia_probability: float
 ):
-
+ 
     client = get_client()
-
+ 
     prompt = f"""
 You are assisting with an educational medical imaging
 AI demonstration.
-
+ 
 A deep-learning model analyzed a chest X-ray and produced
 the following output:
-
+ 
 Predicted class: {prediction}
 Model confidence: {confidence:.2f}%
 NORMAL probability: {normal_probability:.2f}%
 PNEUMONIA probability: {pneumonia_probability:.2f}%
-
+ 
 Generate a concise AI-assisted report using exactly these
 sections:
-
+ 
 1. AI Analysis
 2. Findings
 3. Interpretation
 4. Recommended Next Steps
 5. Limitations and Disclaimer
-
+ 
 Important rules:
-
+ 
 - Do not claim that the patient definitively has pneumonia.
 - Clearly distinguish the AI model prediction from a
   clinical diagnosis.
@@ -102,31 +82,16 @@ Important rules:
   does not prove causation or diagnosis.
 - Keep the report professional and concise.
 """
-
-    try:
-
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt
-        )
-
-    except Exception as error:
-
-        raise RuntimeError(
-            "Gemini report generation failed: "
-            f"{type(error).__name__}: "
-            f"{str(error)}"
-        ) from error
-
-
-    if (
-        not response
-        or not response.text
-    ):
-
+ 
+    response = client.models.generate_content(
+        model="gemini-3.6-flash",
+        contents=prompt
+    )
+ 
+    if not response.text:
         raise RuntimeError(
             "Gemini returned an empty report."
         )
-
-
+ 
     return response.text.strip()
+ 

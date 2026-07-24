@@ -4,6 +4,10 @@ from dotenv import load_dotenv
 from google import genai
 
 
+# ============================================================
+# ENVIRONMENT
+# ============================================================
+
 BASE_DIR = os.path.dirname(
     os.path.dirname(
         os.path.dirname(
@@ -17,17 +21,29 @@ ENV_PATH = os.path.join(
     ".env"
 )
 
-load_dotenv(ENV_PATH)
+load_dotenv(
+    ENV_PATH
+)
 
 
 API_KEY = os.getenv(
     "GEMINI_API_KEY"
 )
 
+GEMINI_MODEL = os.getenv(
+    "GEMINI_MODEL",
+    "gemini-3.6-flash"
+)
+
+
+# ============================================================
+# CLIENT
+# ============================================================
 
 def get_client():
 
     if not API_KEY:
+
         raise RuntimeError(
             "GEMINI_API_KEY is not configured."
         )
@@ -36,6 +52,10 @@ def get_client():
         api_key=API_KEY
     )
 
+
+# ============================================================
+# GENERATE REPORT
+# ============================================================
 
 def generate_medical_report(
     prediction: str,
@@ -83,14 +103,30 @@ Important rules:
 - Keep the report professional and concise.
 """
 
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=prompt
-    )
+    try:
 
-    if not response.text:
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt
+        )
+
+    except Exception as error:
+
+        raise RuntimeError(
+            "Gemini report generation failed: "
+            f"{type(error).__name__}: "
+            f"{str(error)}"
+        ) from error
+
+
+    if (
+        not response
+        or not response.text
+    ):
+
         raise RuntimeError(
             "Gemini returned an empty report."
         )
+
 
     return response.text.strip()

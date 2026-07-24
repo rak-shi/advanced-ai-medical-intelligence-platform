@@ -1,3 +1,4 @@
+import gc
 import os
 import shutil
 import uuid
@@ -16,6 +17,7 @@ from app.database.database import get_db
 from app.database.models import PredictionHistory
 
 from app.services.model_service import model_service
+from app.services.gradcam_service import generate_gradcam
 
 
 # ============================================================
@@ -40,12 +42,10 @@ BASE_DIR = os.path.dirname(
     )
 )
 
-
 UPLOAD_DIR = os.path.join(
     BASE_DIR,
     "uploads"
 )
-
 
 os.makedirs(
     UPLOAD_DIR,
@@ -76,7 +76,6 @@ async def predict_xray(
 
     file_path = None
 
-
     # --------------------------------------------------------
     # Validate filename
     # --------------------------------------------------------
@@ -88,11 +87,9 @@ async def predict_xray(
             detail="Uploaded file has no filename."
         )
 
-
     extension = os.path.splitext(
         file.filename
     )[1].lower()
-
 
     if extension not in ALLOWED_EXTENSIONS:
 
@@ -106,13 +103,12 @@ async def predict_xray(
 
 
     # --------------------------------------------------------
-    # Generate unique filename
+    # Unique filename
     # --------------------------------------------------------
 
     unique_filename = (
         f"{uuid.uuid4().hex}{extension}"
     )
-
 
     file_path = os.path.join(
         UPLOAD_DIR,
@@ -138,7 +134,6 @@ async def predict_xray(
                     buffer
                 )
 
-
         except Exception as error:
 
             raise HTTPException(
@@ -151,12 +146,10 @@ async def predict_xray(
 
 
         # ====================================================
-        # VALIDATE SAVED IMAGE
+        # VALIDATE IMAGE
         # ====================================================
 
-        if not os.path.exists(
-            file_path
-        ):
+        if not os.path.exists(file_path):
 
             raise HTTPException(
                 status_code=500,
@@ -166,10 +159,7 @@ async def predict_xray(
                 )
             )
 
-
-        if os.path.getsize(
-            file_path
-        ) == 0:
+        if os.path.getsize(file_path) == 0:
 
             raise HTTPException(
                 status_code=400,
@@ -190,7 +180,6 @@ async def predict_xray(
                 file_path
             )
 
-
         except Exception as error:
 
             raise HTTPException(
@@ -207,10 +196,7 @@ async def predict_xray(
         # VALIDATE RESULT
         # ====================================================
 
-        if not isinstance(
-            result,
-            dict
-        ):
+        if not isinstance(result, dict):
 
             raise HTTPException(
                 status_code=500,
@@ -221,21 +207,17 @@ async def predict_xray(
                 )
             )
 
-
         prediction = result.get(
             "prediction"
         )
-
 
         confidence = result.get(
             "confidence"
         )
 
-
         probabilities = result.get(
             "probabilities"
         )
-
 
         if prediction is None:
 
@@ -247,7 +229,6 @@ async def predict_xray(
                 )
             )
 
-
         if confidence is None:
 
             raise HTTPException(
@@ -257,7 +238,6 @@ async def predict_xray(
                     "confidence missing."
                 )
             )
-
 
         if not isinstance(
             probabilities,
@@ -275,7 +255,7 @@ async def predict_xray(
 
 
         # ====================================================
-        # NORMAL / PNEUMONIA VALUES
+        # PROBABILITIES
         # ====================================================
 
         normal_probability = (
@@ -284,13 +264,11 @@ async def predict_xray(
             )
         )
 
-
         pneumonia_probability = (
             probabilities.get(
                 "PNEUMONIA"
             )
         )
-
 
         if normal_probability is None:
 
@@ -298,12 +276,9 @@ async def predict_xray(
                 status_code=500,
                 detail=(
                     "MODEL ERROR: "
-                    "NORMAL probability missing. "
-                    f"Available classes: "
-                    f"{list(probabilities.keys())}"
+                    "NORMAL probability missing."
                 )
             )
-
 
         if pneumonia_probability is None:
 
@@ -311,20 +286,100 @@ async def predict_xray(
                 status_code=500,
                 detail=(
                     "MODEL ERROR: "
-                    "PNEUMONIA probability missing. "
-                    f"Available classes: "
-                    f"{list(probabilities.keys())}"
+                    "PNEUMONIA probability missing."
                 )
             )
 
 
         # ====================================================
+        # PREDICTED CLASS INDEX
+        # ====================================================
+
+        try:
+
+            predicted_class_index = (
+                model_service.class_names.index(
+                    prediction
+                )
+            )
+
+        except ValueError:
+
+            predicted_class_index = None
+
+
+        # ====================================================
         # GRAD-CAM
         #
-        # TEMPORARILY DISABLED
+        # IMPORTANT:
+        # Grad-CAM failure must NOT fail prediction.
         # ====================================================
 
         gradcam_url = None
+        gradcam_status = "not_generated"
+
+        try:
+
+            gradcam_result = generate_gradcam(
+                image_path=file_path,
+                predicted_class_index=(
+                    predicted_class_index
+                )
+            )
+
+            if (
+                isinstance(
+                    gradcam_result,
+                    dict
+                )
+                and gradcam_result.get(
+                    "gradcam_filename"
+                )
+            ):
+
+                gradcam_filename = (
+                    gradcam_result[
+                        "gradcam_filename"
+                    ]
+                )
+
+                gradcam_url = (
+                    "/outputs/gradcam/"
+                    f"{gradcam_filename}"
+                )
+
+                gradcam_status = "generated"
+
+            else:
+
+                gradcam_status = (
+                    "generation_returned_no_image"
+                )
+
+
+        except Exception as error:
+
+            print(
+                "GRAD-CAM ERROR:",
+                type(error).__name__,
+                str(error),
+                flush=True
+            )
+
+            gradcam_url = None
+
+            gradcam_status = (
+                "generation_failed: "
+                f"{type(error).__name__}: "
+                f"{str(error)}"
+            )
+
+
+        # ====================================================
+        # CLEAN MEMORY
+        # ====================================================
+
+        gc.collect()
 
 
         # ====================================================
@@ -358,22 +413,16 @@ async def predict_xray(
                 gradcam_path=gradcam_url
             )
 
-
-            db.add(
-                record
-            )
+            db.add(record)
 
             db.commit()
 
-            db.refresh(
-                record
-            )
+            db.refresh(record)
 
 
         except Exception as error:
 
             db.rollback()
-
 
             raise HTTPException(
                 status_code=500,
@@ -386,7 +435,7 @@ async def predict_xray(
 
 
         # ====================================================
-        # SUCCESS
+        # SUCCESS RESPONSE
         # ====================================================
 
         return {
@@ -419,10 +468,10 @@ async def predict_xray(
             },
 
             "gradcam_url":
-                None,
+                gradcam_url,
 
             "gradcam_status":
-                "temporarily_disabled",
+                gradcam_status,
 
             "created_at":
                 (
@@ -449,7 +498,6 @@ async def predict_xray(
 
         db.rollback()
 
-
         raise HTTPException(
             status_code=500,
             detail=(
@@ -463,12 +511,11 @@ async def predict_xray(
     finally:
 
         try:
-
             await file.close()
-
         except Exception:
-
             pass
+
+        gc.collect()
 
 
 # ============================================================
@@ -492,9 +539,7 @@ def prediction_history(
             .all()
         )
 
-
         return records
-
 
     except Exception as error:
 
@@ -533,16 +578,12 @@ def prediction_details(
             .first()
         )
 
-
         if not record:
 
             raise HTTPException(
                 status_code=404,
-                detail=(
-                    "Prediction not found."
-                )
+                detail="Prediction not found."
             )
-
 
         return record
 
@@ -589,23 +630,16 @@ def delete_prediction(
             .first()
         )
 
-
         if not record:
 
             raise HTTPException(
                 status_code=404,
-                detail=(
-                    "Prediction not found."
-                )
+                detail="Prediction not found."
             )
 
-
-        db.delete(
-            record
-        )
+        db.delete(record)
 
         db.commit()
-
 
         return {
             "message":
@@ -621,7 +655,6 @@ def delete_prediction(
     except Exception as error:
 
         db.rollback()
-
 
         raise HTTPException(
             status_code=500,

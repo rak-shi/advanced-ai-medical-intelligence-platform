@@ -7,19 +7,29 @@ from fastapi import (
     UploadFile,
     File,
     HTTPException,
-    Depends,
+    Depends
 )
 
 from sqlalchemy.orm import Session
 
 from app.database.database import get_db
-from app.database.models import PredictionHistory
-from app.services.model_service import model_service
+
+from app.database.models import (
+    PredictionHistory
+)
+
+from app.services.model_service import (
+    model_service
+)
+
+from app.services.gradcam_service import (
+    generate_gradcam
+)
 
 
 router = APIRouter(
     prefix="/api",
-    tags=["Medical Image Analysis"],
+    tags=["Medical Image Analysis"]
 )
 
 
@@ -31,170 +41,180 @@ BASE_DIR = os.path.dirname(
     )
 )
 
+
 UPLOAD_DIR = os.path.join(
     BASE_DIR,
-    "uploads",
+    "uploads"
 )
+
 
 os.makedirs(
     UPLOAD_DIR,
-    exist_ok=True,
+    exist_ok=True
 )
 
 
 ALLOWED_EXTENSIONS = {
     ".jpg",
     ".jpeg",
-    ".png",
+    ".png"
 }
 
 
 @router.post("/predict")
 async def predict_xray(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-):
 
-    if not file.filename:
-        raise HTTPException(
-            status_code=400,
-            detail="Uploaded file has no filename.",
-        )
+    file: UploadFile = File(...),
+
+    db: Session = Depends(get_db)
+):
 
     extension = os.path.splitext(
         file.filename
     )[1].lower()
 
+
     if extension not in ALLOWED_EXTENSIONS:
+
         raise HTTPException(
             status_code=400,
-            detail="Only JPG, JPEG and PNG images are supported.",
+            detail=(
+                "Only JPG, JPEG and PNG "
+                "images are supported."
+            )
         )
+
 
     unique_filename = (
         f"{uuid.uuid4().hex}{extension}"
     )
 
+
     file_path = os.path.join(
         UPLOAD_DIR,
-        unique_filename,
+        unique_filename
     )
+
 
     try:
 
-        # ====================================================
-        # SAVE IMAGE
-        # ====================================================
+        with open(
+            file_path,
+            "wb"
+        ) as buffer:
 
-        with open(file_path, "wb") as buffer:
             shutil.copyfileobj(
                 file.file,
-                buffer,
+                buffer
             )
 
-        # ====================================================
-        # MODEL PREDICTION
-        # ====================================================
+
+        # ----------------------------------------
+        # Prediction
+        # ----------------------------------------
 
         result = model_service.predict(
             file_path
         )
 
-        if not isinstance(result, dict):
-            raise RuntimeError(
-                "Model returned invalid result."
-            )
 
-        prediction = result["prediction"]
-        confidence = result["confidence"]
-        probabilities = result["probabilities"]
+        # ----------------------------------------
+        # Grad-CAM
+        # ----------------------------------------
 
-        normal_probability = (
-            probabilities["NORMAL"]
+        gradcam_result = generate_gradcam(
+            file_path
         )
 
-        pneumonia_probability = (
-            probabilities["PNEUMONIA"]
+
+        gradcam_filename = os.path.basename(
+            gradcam_result["gradcam_path"]
         )
 
-        # ====================================================
-        # GRAD-CAM
-        # ====================================================
-        #
-        # Disabled for cloud deployment because Grad-CAM
-        # requires gradient computation and additional memory.
-        #
-        # The Grad-CAM implementation remains available in:
-        #
-        # app/services/gradcam_service.py
-        #
-        # ====================================================
 
-        gradcam_url = None
-        gradcam_status = "disabled_on_cloud"
+        gradcam_url = (
+            f"/gradcam/{gradcam_filename}"
+        )
 
-        # ====================================================
-        # DATABASE
-        # ====================================================
+
+        # ----------------------------------------
+        # Save history
+        # ----------------------------------------
 
         record = PredictionHistory(
-            filename=str(file.filename),
-            prediction=str(prediction),
-            confidence=float(confidence),
-            normal_probability=float(
-                normal_probability
+
+            filename=file.filename,
+
+            prediction=result[
+                "prediction"
+            ],
+
+            confidence=result[
+                "confidence"
+            ],
+
+            normal_probability=(
+                result["probabilities"][
+                    "NORMAL"
+                ]
             ),
-            pneumonia_probability=float(
-                pneumonia_probability
+
+            pneumonia_probability=(
+                result["probabilities"][
+                    "PNEUMONIA"
+                ]
             ),
-            gradcam_path=None,
+
+            gradcam_path=gradcam_url
         )
 
+
         db.add(record)
+
         db.commit()
+
         db.refresh(record)
 
-        # ====================================================
-        # RESPONSE
-        # ====================================================
 
         return {
+
             "id": record.id,
 
-            "filename": record.filename,
+            "filename":
+                record.filename,
 
-            "prediction": record.prediction,
+            "prediction":
+                record.prediction,
 
-            "confidence": float(
-                record.confidence
-            ),
+            "confidence":
+                record.confidence,
 
             "probabilities": {
-                "NORMAL": float(
-                    record.normal_probability
-                ),
+                "NORMAL":
+                    record.normal_probability,
 
-                "PNEUMONIA": float(
+                "PNEUMONIA":
                     record.pneumonia_probability
-                ),
             },
 
-            "gradcam_url": gradcam_url,
+            "gradcam_url":
+                gradcam_url,
 
-            "gradcam_status": gradcam_status,
-
-            "created_at": (
-                record.created_at.isoformat()
-                if record.created_at
-                else None
-            ),
+            "created_at":
+                record.created_at,
 
             "disclaimer": (
-                "This AI output is for educational "
-                "and research purposes only and is "
-                "not a medical diagnosis."
-            ),
+                "This AI output is for "
+                "educational and research "
+                "purposes only and is not "
+                "a medical diagnosis."
+            )
         }
+
+
+    except HTTPException:
+        raise
+
 
     except Exception as error:
 
@@ -202,30 +222,26 @@ async def predict_xray(
 
         raise HTTPException(
             status_code=500,
-            detail=(
-                f"{type(error).__name__}: "
-                f"{str(error)}"
-            ),
+            detail=str(error)
         )
+
 
     finally:
 
-        try:
-            await file.close()
-        except Exception:
-            pass
+        await file.close()
 
 
 # ============================================================
-# PREDICTION HISTORY
+# HISTORY
 # ============================================================
 
 @router.get("/history")
 def prediction_history(
-    db: Session = Depends(get_db),
+
+    db: Session = Depends(get_db)
 ):
 
-    return (
+    records = (
         db.query(PredictionHistory)
         .order_by(
             PredictionHistory.id.desc()
@@ -234,14 +250,19 @@ def prediction_history(
     )
 
 
+    return records
+
+
 # ============================================================
-# PREDICTION DETAILS
+# SINGLE RECORD
 # ============================================================
 
 @router.get("/history/{prediction_id}")
 def prediction_details(
+
     prediction_id: int,
-    db: Session = Depends(get_db),
+
+    db: Session = Depends(get_db)
 ):
 
     record = (
@@ -253,23 +274,28 @@ def prediction_details(
         .first()
     )
 
+
     if not record:
+
         raise HTTPException(
             status_code=404,
-            detail="Prediction not found.",
+            detail="Prediction not found."
         )
+
 
     return record
 
 
 # ============================================================
-# DELETE PREDICTION
+# DELETE HISTORY
 # ============================================================
 
 @router.delete("/history/{prediction_id}")
 def delete_prediction(
+
     prediction_id: int,
-    db: Session = Depends(get_db),
+
+    db: Session = Depends(get_db)
 ):
 
     record = (
@@ -281,14 +307,19 @@ def delete_prediction(
         .first()
     )
 
+
     if not record:
+
         raise HTTPException(
             status_code=404,
-            detail="Prediction not found.",
+            detail="Prediction not found."
         )
 
+
     db.delete(record)
+
     db.commit()
+
 
     return {
         "message":

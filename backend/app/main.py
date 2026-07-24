@@ -8,9 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.database.database import Base, engine
 
 # IMPORTANT:
-# Import database models BEFORE create_all().
-# This allows SQLAlchemy to register the prediction_history
-# table before creating the SQLite database tables.
+# Import SQLAlchemy models before create_all()
+# so prediction_history is registered with Base.metadata.
 from app.database.models import PredictionHistory
 
 
@@ -26,8 +25,6 @@ from app.api.report import router as report_router
 # CREATE DATABASE TABLES
 # ============================================================
 
-# Creates prediction_history and any other registered tables
-# if they do not already exist.
 Base.metadata.create_all(bind=engine)
 
 
@@ -38,9 +35,8 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="Advanced AI Medical Intelligence Platform",
     description=(
-        "AI-powered chest X-ray analysis platform using "
-        "EfficientNet-B0, Grad-CAM explainability, Gemini LLM, "
-        "SQLite, and FastAPI."
+        "AI-powered chest X-ray analysis using EfficientNet-B0, "
+        "Grad-CAM explainability, Gemini LLM, SQLite and FastAPI."
     ),
     version="1.0.0"
 )
@@ -50,8 +46,6 @@ app = FastAPI(
 # CORS
 # ============================================================
 
-# Allows the Streamlit frontend to communicate with the
-# deployed FastAPI backend.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -62,7 +56,7 @@ app.add_middleware(
 
 
 # ============================================================
-# REGISTER ROUTERS
+# ROUTERS
 # ============================================================
 
 app.include_router(prediction_router)
@@ -70,7 +64,7 @@ app.include_router(report_router)
 
 
 # ============================================================
-# ROOT ENDPOINT
+# ROOT
 # ============================================================
 
 @app.get("/")
@@ -95,8 +89,8 @@ def root():
         ],
         "disclaimer": (
             "This application is intended for educational "
-            "and research purposes only. It is not a "
-            "substitute for professional medical diagnosis."
+            "and research purposes only. It is not a substitute "
+            "for professional medical diagnosis."
         )
     }
 

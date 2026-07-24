@@ -1,34 +1,66 @@
-import os
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes.prediction import router as prediction_router
-from app.api.routes.report import router as report_router
+import os
 
-from app.database.database import Base, engine
+from app.api.prediction import router as prediction_router
+from app.api.report import router as report_router
 
 
 # ============================================================
-# DATABASE
+# PATH CONFIGURATION
 # ============================================================
 
-Base.metadata.create_all(
-    bind=engine
+BASE_DIR = os.path.dirname(
+    os.path.dirname(
+        os.path.abspath(__file__)
+    )
+)
+
+OUTPUTS_DIR = os.path.join(
+    BASE_DIR,
+    "outputs"
+)
+
+GRADCAM_DIR = os.path.join(
+    OUTPUTS_DIR,
+    "gradcam"
+)
+
+UPLOADS_DIR = os.path.join(
+    BASE_DIR,
+    "uploads"
+)
+
+
+# Create required directories
+os.makedirs(
+    OUTPUTS_DIR,
+    exist_ok=True
+)
+
+os.makedirs(
+    GRADCAM_DIR,
+    exist_ok=True
+)
+
+os.makedirs(
+    UPLOADS_DIR,
+    exist_ok=True
 )
 
 
 # ============================================================
-# APP
+# FASTAPI APPLICATION
 # ============================================================
 
 app = FastAPI(
     title="Advanced AI Medical Intelligence Platform",
     description=(
-        "AI-powered chest X-ray pneumonia classification "
-        "with EfficientNet-B0, Grad-CAM explainability "
-        "and Gemini AI-assisted medical reports."
+        "AI-powered chest X-ray analysis platform using "
+        "EfficientNet-B0, Grad-CAM explainability and "
+        "Gemini-generated medical reports."
     ),
     version="1.0.0"
 )
@@ -43,51 +75,33 @@ app.add_middleware(
     allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["*"],
-    allow_headers=["*"]
-)
-
-
-# ============================================================
-# DIRECTORIES
-# ============================================================
-
-BASE_DIR = os.path.dirname(
-    os.path.dirname(
-        os.path.abspath(__file__)
-    )
-)
-
-OUTPUT_DIR = os.path.join(
-    BASE_DIR,
-    "outputs"
-)
-
-GRADCAM_DIR = os.path.join(
-    OUTPUT_DIR,
-    "gradcam"
-)
-
-os.makedirs(
-    GRADCAM_DIR,
-    exist_ok=True
+    allow_headers=["*"],
 )
 
 
 # ============================================================
 # STATIC FILES
 # ============================================================
+# Makes Grad-CAM images accessible through:
+#
+# /outputs/gradcam/<filename>.jpg
+#
+# Example:
+# https://your-backend.onrender.com/
+# outputs/gradcam/gradcam_xxx.jpg
+# ============================================================
 
 app.mount(
     "/outputs",
     StaticFiles(
-        directory=OUTPUT_DIR
+        directory=OUTPUTS_DIR
     ),
     name="outputs"
 )
 
 
 # ============================================================
-# ROUTERS
+# API ROUTERS
 # ============================================================
 
 app.include_router(
@@ -100,34 +114,28 @@ app.include_router(
 
 
 # ============================================================
-# ROOT
+# ROOT ENDPOINT
 # ============================================================
 
 @app.get("/")
 def root():
 
     return {
-
-        "name":
-            "Advanced AI Medical Intelligence Platform",
-
-        "version":
-            "1.0.0",
-
-        "status":
-            "running",
-
-        "model":
-            "EfficientNet-B0",
-
-        "task":
-            "Chest X-ray Pneumonia Detection",
-
+        "name": (
+            "Advanced AI Medical "
+            "Intelligence Platform"
+        ),
+        "version": "1.0.0",
+        "status": "running",
+        "model": "EfficientNet-B0",
+        "task": (
+            "Chest X-ray "
+            "Pneumonia Detection"
+        ),
         "classes": [
             "NORMAL",
             "PNEUMONIA"
         ],
-
         "features": [
             "Deep Learning Prediction",
             "Grad-CAM Explainable AI",
@@ -135,7 +143,16 @@ def root():
             "SQLite Prediction History",
             "REST API"
         ],
-
+        "endpoints": {
+            "prediction": "/api/predict",
+            "history": "/api/history",
+            "report": (
+                "/api/generate-report/"
+                "{prediction_id}"
+            ),
+            "documentation": "/docs",
+            "health": "/health"
+        },
         "disclaimer": (
             "This application is intended "
             "for educational and research "
@@ -147,7 +164,7 @@ def root():
 
 
 # ============================================================
-# HEALTH
+# HEALTH CHECK
 # ============================================================
 
 @app.get("/health")
@@ -155,25 +172,8 @@ def health():
 
     return {
         "status": "healthy",
-        "model": "EfficientNet-B0",
-        "model_loaded":
-            model_service_is_available()
+        "service": (
+            "advanced-medical-ai-backend"
+        ),
+        "model": "EfficientNet-B0"
     }
-
-
-def model_service_is_available():
-
-    try:
-
-        from app.services.model_service import (
-            model_service
-        )
-
-        return (
-            model_service.model
-            is not None
-        )
-
-    except Exception:
-
-        return False

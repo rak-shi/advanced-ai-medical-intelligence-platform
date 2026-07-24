@@ -101,7 +101,6 @@ async def predict_xray(
             )
         )
 
-
     # --------------------------------------------------------
     # Unique filename
     # --------------------------------------------------------
@@ -114,7 +113,6 @@ async def predict_xray(
         UPLOAD_DIR,
         unique_filename
     )
-
 
     try:
 
@@ -144,7 +142,6 @@ async def predict_xray(
                 )
             )
 
-
         # ====================================================
         # VALIDATE IMAGE
         # ====================================================
@@ -169,7 +166,6 @@ async def predict_xray(
                 )
             )
 
-
         # ====================================================
         # MODEL PREDICTION
         # ====================================================
@@ -190,7 +186,6 @@ async def predict_xray(
                     f"{str(error)}"
                 )
             )
-
 
         # ====================================================
         # VALIDATE RESULT
@@ -253,7 +248,6 @@ async def predict_xray(
                 )
             )
 
-
         # ====================================================
         # PROBABILITIES
         # ====================================================
@@ -290,7 +284,6 @@ async def predict_xray(
                 )
             )
 
-
         # ====================================================
         # PREDICTED CLASS INDEX
         # ====================================================
@@ -306,7 +299,6 @@ async def predict_xray(
         except ValueError:
 
             predicted_class_index = None
-
 
         # ====================================================
         # GRAD-CAM
@@ -356,7 +348,6 @@ async def predict_xray(
                     "generation_returned_no_image"
                 )
 
-
         except Exception as error:
 
             print(
@@ -374,13 +365,11 @@ async def predict_xray(
                 f"{str(error)}"
             )
 
-
         # ====================================================
         # CLEAN MEMORY
         # ====================================================
 
         gc.collect()
-
 
         # ====================================================
         # DATABASE
@@ -419,7 +408,6 @@ async def predict_xray(
 
             db.refresh(record)
 
-
         except Exception as error:
 
             db.rollback()
@@ -432,7 +420,6 @@ async def predict_xray(
                     f"{str(error)}"
                 )
             )
-
 
         # ====================================================
         # SUCCESS RESPONSE
@@ -488,11 +475,9 @@ async def predict_xray(
             )
         }
 
-
     except HTTPException:
 
         raise
-
 
     except Exception as error:
 
@@ -506,7 +491,6 @@ async def predict_xray(
                 f"{str(error)}"
             )
         )
-
 
     finally:
 
@@ -587,11 +571,9 @@ def prediction_details(
 
         return record
 
-
     except HTTPException:
 
         raise
-
 
     except Exception as error:
 
@@ -646,11 +628,9 @@ def delete_prediction(
                 "Prediction deleted successfully."
         }
 
-
     except HTTPException:
 
         raise
-
 
     except Exception as error:
 

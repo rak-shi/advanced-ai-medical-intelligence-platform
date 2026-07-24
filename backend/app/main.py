@@ -1,54 +1,34 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
-import os
+# ============================================================
+# DATABASE
+# ============================================================
+
+from app.database.database import Base, engine
+
+# IMPORTANT:
+# Import database models BEFORE create_all().
+# This allows SQLAlchemy to register the prediction_history
+# table before creating the SQLite database tables.
+from app.database.models import PredictionHistory
+
+
+# ============================================================
+# API ROUTERS
+# ============================================================
 
 from app.api.prediction import router as prediction_router
 from app.api.report import router as report_router
 
 
 # ============================================================
-# PATH CONFIGURATION
+# CREATE DATABASE TABLES
 # ============================================================
 
-BASE_DIR = os.path.dirname(
-    os.path.dirname(
-        os.path.abspath(__file__)
-    )
-)
-
-OUTPUTS_DIR = os.path.join(
-    BASE_DIR,
-    "outputs"
-)
-
-GRADCAM_DIR = os.path.join(
-    OUTPUTS_DIR,
-    "gradcam"
-)
-
-UPLOADS_DIR = os.path.join(
-    BASE_DIR,
-    "uploads"
-)
-
-
-# Create required directories
-os.makedirs(
-    OUTPUTS_DIR,
-    exist_ok=True
-)
-
-os.makedirs(
-    GRADCAM_DIR,
-    exist_ok=True
-)
-
-os.makedirs(
-    UPLOADS_DIR,
-    exist_ok=True
-)
+# Creates prediction_history and any other registered tables
+# if they do not already exist.
+Base.metadata.create_all(bind=engine)
 
 
 # ============================================================
@@ -59,8 +39,8 @@ app = FastAPI(
     title="Advanced AI Medical Intelligence Platform",
     description=(
         "AI-powered chest X-ray analysis platform using "
-        "EfficientNet-B0, Grad-CAM explainability and "
-        "Gemini-generated medical reports."
+        "EfficientNet-B0, Grad-CAM explainability, Gemini LLM, "
+        "SQLite, and FastAPI."
     ),
     version="1.0.0"
 )
@@ -70,47 +50,23 @@ app = FastAPI(
 # CORS
 # ============================================================
 
+# Allows the Streamlit frontend to communicate with the
+# deployed FastAPI backend.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
 # ============================================================
-# STATIC FILES
-# ============================================================
-# Makes Grad-CAM images accessible through:
-#
-# /outputs/gradcam/<filename>.jpg
-#
-# Example:
-# https://your-backend.onrender.com/
-# outputs/gradcam/gradcam_xxx.jpg
+# REGISTER ROUTERS
 # ============================================================
 
-app.mount(
-    "/outputs",
-    StaticFiles(
-        directory=OUTPUTS_DIR
-    ),
-    name="outputs"
-)
-
-
-# ============================================================
-# API ROUTERS
-# ============================================================
-
-app.include_router(
-    prediction_router
-)
-
-app.include_router(
-    report_router
-)
+app.include_router(prediction_router)
+app.include_router(report_router)
 
 
 # ============================================================
@@ -121,17 +77,11 @@ app.include_router(
 def root():
 
     return {
-        "name": (
-            "Advanced AI Medical "
-            "Intelligence Platform"
-        ),
+        "name": "Advanced AI Medical Intelligence Platform",
         "version": "1.0.0",
         "status": "running",
         "model": "EfficientNet-B0",
-        "task": (
-            "Chest X-ray "
-            "Pneumonia Detection"
-        ),
+        "task": "Chest X-ray Pneumonia Detection",
         "classes": [
             "NORMAL",
             "PNEUMONIA"
@@ -143,22 +93,10 @@ def root():
             "SQLite Prediction History",
             "REST API"
         ],
-        "endpoints": {
-            "prediction": "/api/predict",
-            "history": "/api/history",
-            "report": (
-                "/api/generate-report/"
-                "{prediction_id}"
-            ),
-            "documentation": "/docs",
-            "health": "/health"
-        },
         "disclaimer": (
-            "This application is intended "
-            "for educational and research "
-            "purposes only. It is not a "
-            "substitute for professional "
-            "medical diagnosis."
+            "This application is intended for educational "
+            "and research purposes only. It is not a "
+            "substitute for professional medical diagnosis."
         )
     }
 
@@ -172,8 +110,9 @@ def health():
 
     return {
         "status": "healthy",
-        "service": (
-            "advanced-medical-ai-backend"
-        ),
-        "model": "EfficientNet-B0"
+        "backend": "FastAPI",
+        "model": "EfficientNet-B0",
+        "database": "SQLite",
+        "explainability": "Grad-CAM",
+        "llm": "Gemini"
     }

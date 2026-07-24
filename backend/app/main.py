@@ -1,73 +1,54 @@
 import os
 
 from fastapi import FastAPI
-
 from fastapi.middleware.cors import CORSMiddleware
-
 from fastapi.staticfiles import StaticFiles
+
+from app.api.routes.prediction import router as prediction_router
+from app.api.routes.report import router as report_router
 
 from app.database.database import Base, engine
 
-# Import database models so SQLAlchemy knows about the tables
-from app.database import models
-
-# Import API routers
-from app.api.prediction import router as prediction_router
-from app.api.report import router as report_router
-
 
 # ============================================================
-# DATABASE INITIALIZATION
+# DATABASE
 # ============================================================
 
-# Create database tables if they do not already exist
 Base.metadata.create_all(
     bind=engine
 )
 
 
 # ============================================================
-# FASTAPI APPLICATION
+# APP
 # ============================================================
 
 app = FastAPI(
-
     title="Advanced AI Medical Intelligence Platform",
-
     description=(
-        "AI-powered chest X-ray analysis platform using "
-        "EfficientNet-B0, Grad-CAM explainable AI, "
-        "Gemini LLM-generated medical reports, "
-        "and SQLite prediction history."
+        "AI-powered chest X-ray pneumonia classification "
+        "with EfficientNet-B0, Grad-CAM explainability "
+        "and Gemini AI-assisted medical reports."
     ),
-
     version="1.0.0"
 )
 
 
 # ============================================================
-# CORS CONFIGURATION
+# CORS
 # ============================================================
 
-# Allows the Streamlit frontend to communicate
-# with the FastAPI backend.
-
 app.add_middleware(
-
     CORSMiddleware,
-
     allow_origins=["*"],
-
-    allow_credentials=True,
-
+    allow_credentials=False,
     allow_methods=["*"],
-
     allow_headers=["*"]
 )
 
 
 # ============================================================
-# BASE DIRECTORY
+# DIRECTORIES
 # ============================================================
 
 BASE_DIR = os.path.dirname(
@@ -76,17 +57,15 @@ BASE_DIR = os.path.dirname(
     )
 )
 
-
-# ============================================================
-# GRAD-CAM OUTPUT DIRECTORY
-# ============================================================
-
-GRADCAM_DIR = os.path.join(
+OUTPUT_DIR = os.path.join(
     BASE_DIR,
-    "outputs",
-    "gradcam"
+    "outputs"
 )
 
+GRADCAM_DIR = os.path.join(
+    OUTPUT_DIR,
+    "gradcam"
+)
 
 os.makedirs(
     GRADCAM_DIR,
@@ -95,38 +74,33 @@ os.makedirs(
 
 
 # ============================================================
-# SERVE GRAD-CAM IMAGES
+# STATIC FILES
 # ============================================================
 
 app.mount(
-
-    "/gradcam",
-
+    "/outputs",
     StaticFiles(
-        directory=GRADCAM_DIR
+        directory=OUTPUT_DIR
     ),
-
-    name="gradcam"
+    name="outputs"
 )
 
 
 # ============================================================
-# REGISTER API ROUTERS
+# ROUTERS
 # ============================================================
 
-# Deep-learning prediction APIs
 app.include_router(
     prediction_router
 )
 
-# Gemini AI medical-report APIs
 app.include_router(
     report_router
 )
 
 
 # ============================================================
-# ROOT ENDPOINT
+# ROOT
 # ============================================================
 
 @app.get("/")
@@ -155,42 +129,51 @@ def root():
         ],
 
         "features": [
-
             "Deep Learning Prediction",
-
             "Grad-CAM Explainable AI",
-
             "Gemini AI Medical Report",
-
             "SQLite Prediction History",
-
             "REST API"
         ],
 
         "disclaimer": (
-            "This application is intended for "
-            "educational and research purposes only. "
-            "It is not a substitute for professional "
+            "This application is intended "
+            "for educational and research "
+            "purposes only. It is not a "
+            "substitute for professional "
             "medical diagnosis."
         )
     }
 
 
 # ============================================================
-# HEALTH CHECK
+# HEALTH
 # ============================================================
 
 @app.get("/health")
 def health():
 
     return {
-
-        "status":
-            "healthy",
-
-        "service":
-            "Advanced AI Medical Intelligence Platform",
-
-        "model":
-            "EfficientNet-B0"
+        "status": "healthy",
+        "model": "EfficientNet-B0",
+        "model_loaded":
+            model_service_is_available()
     }
+
+
+def model_service_is_available():
+
+    try:
+
+        from app.services.model_service import (
+            model_service
+        )
+
+        return (
+            model_service.model
+            is not None
+        )
+
+    except Exception:
+
+        return False

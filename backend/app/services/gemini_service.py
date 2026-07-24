@@ -19,7 +19,10 @@ ENV_PATH = os.path.join(
 
 load_dotenv(ENV_PATH)
 
-API_KEY = os.getenv("GEMINI_API_KEY")
+
+API_KEY = os.getenv(
+    "GEMINI_API_KEY"
+)
 
 
 def get_client():
